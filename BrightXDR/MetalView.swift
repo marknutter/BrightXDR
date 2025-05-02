@@ -62,7 +62,7 @@ class MetalView: MTKView, MTKViewDelegate {
         if let layer = self.layer as? CAMetalLayer {
             layer.wantsExtendedDynamicRangeContent = true
             layer.isOpaque = false
-                                    
+
             // Blend EDR layer with background
             layer.compositingFilter = "multiplyBlendMode"
         }
