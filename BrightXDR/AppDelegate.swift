@@ -33,14 +33,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.level = NSWindow.Level.mainMenu
 
         // Allow window to overlay in Mission Control and Spaces
-        window.collectionBehavior = [.stationary, .canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle] // .managed
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle] // .managed
 
         // Keep visible all time (required for overlays)
         window.hidesOnDeactivate = false
+        // window.allowsConcurrentViewDrawing = true
 
         // Add metal view with HDR overlay
         guard let view = window.contentView else { return }
-        // The contrast and brightness can be adjust for a brighter effect, at the expense of color correctness
+        // The contrast and brightness can be adjusted for a brighter effect, at the expense of color correctness
         metalView = MetalView(frame: view.bounds, frameRate: 3, contrast: 1.0, brightness: 1.0)
         metalView.autoresizingMask = [.width, .height]
         view.addSubview(metalView)
