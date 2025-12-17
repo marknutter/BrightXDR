@@ -3,6 +3,9 @@ __BrightXDR__ is a proof-of-concept implementation that demonstrates how to upsc
 
 > The main idea behind this project is to provide an open source and free-to-use alternative to existing apps that offer similar functionality for a price of up to &euro;20. I believe that everyone should have access to powerful tools that enhance their display experience, regardless of their budget.
 
+> [!WARNING]
+> This project is no longer maintained. If you're looking for an actively maintained alternative, please use [**BrightIntosh**](https://github.com/niklasr22/BrightIntosh) instead.
+
 ## About 
 The app uses MetalKit to overlay the CIImage with a transparent color in EDR color space over the display windows while applying color blending filter.
 
@@ -32,6 +35,7 @@ If you're interested in learning more about the technologies used in this app, c
 ## Alternatives
 
 If you're looking for alternative applications that provide similar functionality, you might want to check out:
+- [BrightIntosh](https://github.com/niklasr22/BrightIntosh) ⭐️
 - [Vivid](https://www.getvivid.app/)
 - [Lunar](https://github.com/alin23/Lunar)
 - [BetterDisplay](https://github.com/waydabber/BetterDisplay)
