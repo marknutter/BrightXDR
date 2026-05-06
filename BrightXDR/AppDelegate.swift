@@ -30,7 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Set the window's level to mainMenu to make it float above all other windows
         // Requires "Application is agent (UIElement)" set to "YES" in info.plist for system-wide support
         // The maximum possible values is NSWindow.Level(rawValue: Int(CGShieldingWindowLevel() + 19))
-        window.level = NSWindow.Level.mainMenu
+        window.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) + 19)
 
         // Allow window to overlay in Mission Control and Spaces
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle] // .managed
