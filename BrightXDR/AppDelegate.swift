@@ -42,7 +42,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Add metal view with HDR overlay
         guard let view = window.contentView else { return }
         // The contrast and brightness can be adjusted for a brighter effect, at the expense of color correctness
-        metalView = MetalView(frame: view.bounds, frameRate: 3, contrast: 1.0, brightness: 1.0)
+        metalView = MetalView(frame: view.bounds, frameRate: 3, contrast: 1.0, brightness: 1.5)
         metalView.autoresizingMask = [.width, .height]
         view.addSubview(metalView)
 
