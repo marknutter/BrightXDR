@@ -139,6 +139,22 @@ class MetalView: MTKView, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        // Hide the overlay while macOS's screencaptureui process is alive (it
+        // owns the cmd-shift-3/4/5 capture sessions and is launched/killed
+        // around them). The multiply-blend overlay otherwise saturates the
+        // live display to white during recording — the EDR-headroom property
+        // doesn't reflect this state, so screencaptureui presence is the only
+        // reliable signal we have. Other recorders (QuickTime, OBS, Loom) keep
+        // running between sessions, so checking them produces false positives.
+        let recording = NSWorkspace.shared.runningApplications.contains { app in
+            app.bundleIdentifier == "com.apple.screencaptureui"
+        }
+        let targetAlpha: CGFloat = recording ? 0.0 : 1.0
+        if window?.alphaValue != targetAlpha {
+            window?.alphaValue = targetAlpha
+        }
+        if recording { return }
+
         // Verify transparent image was rendered
         guard let image = image, let colorSpace = colorSpace else { return  }
 
