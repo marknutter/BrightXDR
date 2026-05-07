@@ -26,6 +26,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = .clear
         // Ignore all mouse events
         window.ignoresMouseEvents = true
+        // Exclude the overlay from screen capture / screenshots / screen recording.
+        // Without this, macOS captures the multiply-blended HDR composite and
+        // re-encodes it as SDR, producing washed-out screenshots.
+        window.sharingType = .none
 
         // Set the window's level to mainMenu to make it float above all other windows
         // Requires "Application is agent (UIElement)" set to "YES" in info.plist for system-wide support
