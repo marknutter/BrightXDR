@@ -18,6 +18,7 @@ class MetalView: MTKView, MTKViewDelegate {
     private var renderContext: CIContext?
 
     private var image: CIImage?
+    private var colorControlsFilter: CIFilter?
 
     /// Public initializer
     /// - frameRate: lower the frame rate for better perfomance, otherwise the screen frame rate is used (probably 120)
@@ -66,10 +67,13 @@ class MetalView: MTKView, MTKViewDelegate {
             // Blend EDR layer with background
             layer.compositingFilter = "multiplyBlendMode"
         }
-        // Initialize color filter for brightness adjustment
-        guard let colorControlsFilter = CIFilter(name: "CIColorControls") else { return }
-        colorControlsFilter.setValue(contrast, forKey: kCIInputContrastKey) // default to 1.0
-        colorControlsFilter.setValue(brightness, forKey: kCIInputBrightnessKey) // default to 0.0
+        // Initialize color filter for brightness adjustment. Retain it on
+        // the instance so setBrightness(_:) can re-tune it at runtime.
+        guard let filter = CIFilter(name: "CIColorControls") else { return }
+        filter.setValue(contrast, forKey: kCIInputContrastKey) // default to 1.0
+        filter.setValue(brightness, forKey: kCIInputBrightnessKey) // default to 0.0
+        self.colorControlsFilter = filter
+        let colorControlsFilter = filter
 
         // Transparent color in EDR color space
         guard let colorSpace = colorSpace, let color = CIColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0, colorSpace: colorSpace),
@@ -139,21 +143,26 @@ class MetalView: MTKView, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
-        // Hide the overlay while macOS's screencaptureui process is alive (it
-        // owns the cmd-shift-3/4/5 capture sessions and is launched/killed
-        // around them). The multiply-blend overlay otherwise saturates the
-        // live display to white during recording — the EDR-headroom property
-        // doesn't reflect this state, so screencaptureui presence is the only
-        // reliable signal we have. Other recorders (QuickTime, OBS, Loom) keep
-        // running between sessions, so checking them produces false positives.
+        // Hide the overlay when:
+        //  1. The user has flipped the menu-bar Boost toggle off. Manual escape
+        //     hatch for HDR-rendering apps (QuickTime HDR video, browser HDR,
+        //     Photos with HDR images) where the multiply-blend overlay washes
+        //     the content out.
+        //  2. macOS's screencaptureui process is alive — it owns the
+        //     cmd-shift-3/4/5 capture sessions; the multiply-blend overlay
+        //     otherwise saturates the live display to white during recording.
+        //     EDR-headroom doesn't change in that state, so process presence is
+        //     the only reliable signal.
+        let userEnabled = (UserDefaults.standard.object(forKey: boostEnabledKey) as? Bool) ?? true
         let recording = NSWorkspace.shared.runningApplications.contains { app in
             app.bundleIdentifier == "com.apple.screencaptureui"
         }
-        let targetAlpha: CGFloat = recording ? 0.0 : 1.0
+        let suppress = !userEnabled || recording
+        let targetAlpha: CGFloat = suppress ? 0.0 : 1.0
         if window?.alphaValue != targetAlpha {
             window?.alphaValue = targetAlpha
         }
-        if recording { return }
+        if suppress { return }
 
         // Verify transparent image was rendered
         guard let image = image, let colorSpace = colorSpace else { return  }
@@ -175,4 +184,20 @@ class MetalView: MTKView, MTKViewDelegate {
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { }
+
+    /// Re-tune the brightness multiplier without rebuilding the view.
+    /// Re-renders the static white CIImage through the same CIColorControls
+    /// filter with the new value so the next draw cycle picks it up.
+    func setBrightness(_ value: Float) {
+        self.brightness = value
+        guard let filter = colorControlsFilter,
+              let cs = colorSpace,
+              let color = CIColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0, colorSpace: cs)
+        else { return }
+        filter.setValue(value, forKey: kCIInputBrightnessKey)
+        filter.setValue(CIImage(color: color), forKey: kCIInputImageKey)
+        if let output = filter.outputImage {
+            self.image = output
+        }
+    }
 }
