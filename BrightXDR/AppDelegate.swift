@@ -150,10 +150,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Shared toggle path for both the menu item and the global hotkey.
     /// Writes to `boostEnabledKey` (MetalView reads it each draw) and updates
     /// the menu item's checkmark so the UI stays in sync after a hotkey press.
+    ///
+    /// Engaging Boost also sets a one-shot override on MetalView's capture
+    /// auto-suppress. Without it, a stuck screencaptureui state (#8: dragging
+    /// the screenshot thumbnail out leaves a large screencaptureui window
+    /// resident) leaves the user with no recovery — toggling Boost only flips
+    /// the user-enabled bit while `capturing` keeps forcing alpha to 0. The
+    /// override clears automatically the next time the detector observes
+    /// capturing == false, so the next real cmd-shift-4 is still suppressed.
     private func toggleBoostState() {
         let next = !boostEnabled()
         UserDefaults.standard.set(next, forKey: boostEnabledKey)
         boostMenuItem?.state = next ? .on : .off
+        metalView?.setCaptureOverride(next)
     }
 
     /// Register ⌃⌥⌘B as a system-wide hotkey via Carbon's RegisterEventHotKey.
