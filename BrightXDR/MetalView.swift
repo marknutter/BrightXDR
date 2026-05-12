@@ -7,6 +7,7 @@
 
 import Cocoa
 import MetalKit
+import os.log
 
 // Metal view displaying static HDR content to enable EDR display mode
 class MetalView: MTKView, MTKViewDelegate {
@@ -32,6 +33,7 @@ class MetalView: MTKView, MTKViewDelegate {
     // transitions, not every draw frame at 30fps. Used by the diagnostic
     // log path in isScreencaptureuiShowingInteractiveUI().
     private var lastLoggedCapturing: Bool?
+    private var lastDiagWriteAt: Date = .distantPast
 
     /// Public initializer
     /// - frameRate: lower the frame rate for better perfomance, otherwise the screen frame rate is used (probably 120)
@@ -253,25 +255,34 @@ class MetalView: MTKView, MTKViewDelegate {
             }
         }
         let isCapturing = !matching.isEmpty
-        // Log on state transition only (not every 30fps draw). Captures the
-        // bounds/layer/alpha of every screencaptureui window large enough to
-        // trigger suppression — diagnostic for #8 follow-up to refine the
-        // detector. Pipe Console.app filter: "BrightXDR".
-        if lastLoggedCapturing != isCapturing {
+        // Diagnostic logging via os_log with explicit %{public}@ so window
+        // descriptors aren't redacted as <private>. Console.app filter:
+        // subsystem=com.starkdmi.BrightXDR. Logs on every transition plus a
+        // heartbeat every ~2s while capturing is true — surfaces windows
+        // entering or leaving the matching set during a single suppress
+        // episode (the diagnostic data needed to refine the 200px threshold
+        // detector, e.g. for the screenshot-thumbnail-drag-out edge case).
+        let transitioned = (lastLoggedCapturing != isCapturing)
+        let shouldHeartbeat = isCapturing && Date().timeIntervalSince(lastDiagWriteAt) > 2.0
+        if transitioned || shouldHeartbeat {
             if isCapturing {
                 let descriptions = matching.map { m in
                     String(format: "{x=%.0f y=%.0f w=%.0f h=%.0f layer=%d alpha=%.2f}",
                            m.bounds.origin.x, m.bounds.origin.y, m.bounds.width, m.bounds.height,
                            m.layer, m.alpha)
                 }.joined(separator: ", ")
-                NSLog("BrightXDR: screencaptureui detected (suppressing). matching windows: \(descriptions)")
+                let tag = transitioned ? "DETECTED" : "STILL-ACTIVE"
+                os_log("%{public}@ windows=%d %{public}@", log: MetalView.diagLog, type: .default, tag, matching.count, descriptions)
             } else {
-                NSLog("BrightXDR: screencaptureui cleared (resuming)")
+                os_log("CLEARED", log: MetalView.diagLog, type: .default)
             }
-            lastLoggedCapturing = isCapturing
+            if transitioned { lastLoggedCapturing = isCapturing }
+            lastDiagWriteAt = Date()
         }
         return isCapturing
     }
+
+    private static let diagLog = OSLog(subsystem: "com.starkdmi.BrightXDR", category: "screencaptureui")
 
     /// Engage or release the manual capture-detection override.
     /// Engaging makes the next draw cycle treat `capturing` as harmless until
