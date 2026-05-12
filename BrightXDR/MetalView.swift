@@ -7,6 +7,7 @@
 
 import Cocoa
 import MetalKit
+import os.log
 
 // Metal view displaying static HDR content to enable EDR display mode
 class MetalView: MTKView, MTKViewDelegate {
@@ -19,6 +20,20 @@ class MetalView: MTKView, MTKViewDelegate {
 
     private var image: CIImage?
     private var colorControlsFilter: CIFilter?
+
+    // Manual override: when true, the capturing auto-suppress is bypassed.
+    // Set by AppDelegate when the user explicitly toggles Boost ON. Cleared
+    // automatically the next draw cycle that observes capturing == false, so
+    // the next genuine capture is suppressed normally. Recovery path for #8
+    // (screencaptureui leaves a large drag-image window resident after the
+    // user drags the screenshot thumbnail onto another app).
+    private var captureOverrideActive = false
+
+    // Tracks the last capturing-state observation so we only NSLog on
+    // transitions, not every draw frame at 30fps. Used by the diagnostic
+    // log path in isScreencaptureuiShowingInteractiveUI().
+    private var lastLoggedCapturing: Bool?
+    private var lastDiagWriteAt: Date = .distantPast
 
     /// Public initializer
     /// - frameRate: lower the frame rate for better perfomance, otherwise the screen frame rate is used (probably 120)
@@ -161,7 +176,12 @@ class MetalView: MTKView, MTKViewDelegate {
         //     bounds instead to filter the thumbnail out.
         let userEnabled = (UserDefaults.standard.object(forKey: boostEnabledKey) as? Bool) ?? true
         let capturing = isScreencaptureuiShowingInteractiveUI()
-        let suppress = !userEnabled || capturing
+        // Auto-clear the manual override once the stuck capturing condition
+        // resolves, so the next real capture is suppressed normally.
+        if !capturing && captureOverrideActive {
+            captureOverrideActive = false
+        }
+        let suppress = !userEnabled || (capturing && !captureOverrideActive)
         let targetAlpha: CGFloat = suppress ? 0.0 : 1.0
         if window?.alphaValue != targetAlpha {
             window?.alphaValue = targetAlpha
@@ -221,6 +241,7 @@ class MetalView: MTKView, MTKViewDelegate {
         }
 
         let thumbnailMaxDimension: CGFloat = 200
+        var matching: [(bounds: CGRect, layer: Int, alpha: Double)] = []
         for entry in entries {
             guard let ownerPID = entry[kCGWindowOwnerPID as String] as? pid_t,
                   ownerPID == capturePID,
@@ -228,10 +249,47 @@ class MetalView: MTKView, MTKViewDelegate {
                   let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
             else { continue }
             if bounds.width > thumbnailMaxDimension || bounds.height > thumbnailMaxDimension {
-                return true
+                let layer = (entry[kCGWindowLayer as String] as? Int) ?? 0
+                let alpha = (entry[kCGWindowAlpha as String] as? Double) ?? 1.0
+                matching.append((bounds, layer, alpha))
             }
         }
-        return false
+        let isCapturing = !matching.isEmpty
+        // Diagnostic logging via os_log with explicit %{public}@ so window
+        // descriptors aren't redacted as <private>. Console.app filter:
+        // subsystem=com.starkdmi.BrightXDR. Logs on every transition plus a
+        // heartbeat every ~2s while capturing is true — surfaces windows
+        // entering or leaving the matching set during a single suppress
+        // episode (the diagnostic data needed to refine the 200px threshold
+        // detector, e.g. for the screenshot-thumbnail-drag-out edge case).
+        let transitioned = (lastLoggedCapturing != isCapturing)
+        let shouldHeartbeat = isCapturing && Date().timeIntervalSince(lastDiagWriteAt) > 2.0
+        if transitioned || shouldHeartbeat {
+            if isCapturing {
+                let descriptions = matching.map { m in
+                    String(format: "{x=%.0f y=%.0f w=%.0f h=%.0f layer=%d alpha=%.2f}",
+                           m.bounds.origin.x, m.bounds.origin.y, m.bounds.width, m.bounds.height,
+                           m.layer, m.alpha)
+                }.joined(separator: ", ")
+                let tag = transitioned ? "DETECTED" : "STILL-ACTIVE"
+                os_log("%{public}@ windows=%d %{public}@", log: MetalView.diagLog, type: .default, tag, matching.count, descriptions)
+            } else {
+                os_log("CLEARED", log: MetalView.diagLog, type: .default)
+            }
+            if transitioned { lastLoggedCapturing = isCapturing }
+            lastDiagWriteAt = Date()
+        }
+        return isCapturing
+    }
+
+    private static let diagLog = OSLog(subsystem: "com.starkdmi.BrightXDR", category: "screencaptureui")
+
+    /// Engage or release the manual capture-detection override.
+    /// Engaging makes the next draw cycle treat `capturing` as harmless until
+    /// the stuck condition naturally clears. Wired to the Boost toggle so the
+    /// user has a single, predictable recovery action: re-toggle Boost.
+    func setCaptureOverride(_ active: Bool) {
+        captureOverrideActive = active
     }
 
     /// Re-tune the brightness multiplier without rebuilding the view.
