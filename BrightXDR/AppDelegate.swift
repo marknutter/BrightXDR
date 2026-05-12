@@ -133,9 +133,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(sliderItem)
 
         menu.addItem(NSMenuItem.separator())
+
+        let reportItem = NSMenuItem(title: "Report affected app…",
+                                    action: #selector(reportAffectedApp(_:)),
+                                    keyEquivalent: "")
+        reportItem.target = self
+        menu.addItem(reportItem)
+
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         statusItem.menu = menu
+    }
+
+    /// Opens a pre-filled GitHub issue form on the fork. Title is left
+    /// open-ended after "Affected app: " so the user finishes naming the
+    /// conflicting app; body is a checklist of the info needed to act on
+    /// the report (app name+version, what they were doing, failure mode,
+    /// macOS version, boost level, whether ⌃⌥⌘B was sufficient).
+    @objc private func reportAffectedApp(_ sender: NSMenuItem) {
+        let bodyTemplate = """
+        **Affected app & version:**\u{0020}
+
+        **What I was doing when the overlay caused a problem:**\u{0020}
+
+        **Failure mode:** (pick one or describe)
+        - [ ] Local display whited out (multiply-blend overlay)
+        - [ ] Remote viewer / capture output looked washed out
+        - [ ] Color/luminance distortion (color-critical work)
+        - [ ] Other:\u{0020}
+
+        **macOS version:** (System Settings → General → About)\u{0020}
+
+        **BrightXDR boost level:** (slider value, e.g. 1.5)\u{0020}
+
+        **Was ⌃⌥⌘B (hotkey) sufficient as a workaround?**
+        - [ ] Yes — toggling Boost off let me proceed
+        - [ ] No — please describe what additional handling would help:\u{0020}
+        """
+
+        var components = URLComponents(string: "https://github.com/marknutter/BrightXDR/issues/new")!
+        components.queryItems = [
+            URLQueryItem(name: "title", value: "Affected app: "),
+            URLQueryItem(name: "body", value: bodyTemplate),
+            URLQueryItem(name: "labels", value: "affected-app"),
+        ]
+        guard let url = components.url else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func boostEnabled() -> Bool {
