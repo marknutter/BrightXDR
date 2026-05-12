@@ -6,6 +6,7 @@
 //
 
 import Cocoa
+import Carbon.HIToolbox
 
 // UserDefaults key for the user-controlled Boost toggle. MetalView reads this
 // each draw cycle and uses it as a multiplier alongside the
@@ -31,8 +32,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var boostMenuItem: NSMenuItem!
     private var brightnessLabelItem: NSMenuItem!
 
+    // Global Boost hotkey (⌃⌥⌘B). Registered via Carbon RegisterEventHotKey so
+    // it fires even when the overlay has whited out the screen and the menu
+    // bar is unreachable — the primary recovery path documented in #4.
+    private var boostHotKeyRef: EventHotKeyRef?
+    private var boostHotKeyHandler: EventHandlerRef?
+
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         installStatusItem()
+        registerBoostHotKey()
         guard let mainScreen = NSScreen.main else { return }
 
         // let splitViewRect = NSRect(x: mainScreen.frame.width/2, y: 0, width: mainScreen.frame.width/2, height: mainScreen.frame.height)
@@ -64,7 +72,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Add metal view with HDR overlay
         guard let view = window.contentView else { return }
         // The contrast and brightness can be adjusted for a brighter effect, at the expense of color correctness
-        metalView = MetalView(frame: view.bounds, frameRate: 3, contrast: 1.0, brightness: currentBrightness())
+        // 30fps so window.alphaValue updates (suppress on/off) respond within
+        // one draw cycle (~33ms) instead of 333ms. The render path is a static
+        // CIImage; the cost increase is negligible.
+        metalView = MetalView(frame: view.bounds, frameRate: 30, contrast: 1.0, brightness: currentBrightness())
         metalView.autoresizingMask = [.width, .height]
         view.addSubview(metalView)
 
@@ -86,8 +97,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        boostMenuItem = NSMenuItem(title: "Boost", action: #selector(toggleBoost(_:)), keyEquivalent: "")
+        boostMenuItem = NSMenuItem(title: "Boost", action: #selector(toggleBoost(_:)), keyEquivalent: "b")
         boostMenuItem.target = self
+        // Display the global hotkey (⌃⌥⌘B) on the menu item so users can
+        // discover it. Carbon RegisterEventHotKey owns the actual key handling
+        // system-wide; the menu's keyEquivalent only fires while the status
+        // menu is open. Both paths route through toggleBoost(_:), so a
+        // double-fire would be a no-op-pair anyway.
+        boostMenuItem.keyEquivalentModifierMask = [.control, .option, .command]
         boostMenuItem.state = boostEnabled() ? .on : .off
         menu.addItem(boostMenuItem)
 
@@ -127,9 +144,71 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleBoost(_ sender: NSMenuItem) {
+        toggleBoostState()
+    }
+
+    /// Shared toggle path for both the menu item and the global hotkey.
+    /// Writes to `boostEnabledKey` (MetalView reads it each draw) and updates
+    /// the menu item's checkmark so the UI stays in sync after a hotkey press.
+    private func toggleBoostState() {
         let next = !boostEnabled()
         UserDefaults.standard.set(next, forKey: boostEnabledKey)
-        sender.state = next ? .on : .off
+        boostMenuItem?.state = next ? .on : .off
+    }
+
+    /// Register ⌃⌥⌘B as a system-wide hotkey via Carbon's RegisterEventHotKey.
+    /// Chosen over NSEvent.addGlobalMonitorForEvents because Carbon does NOT
+    /// require Accessibility permission, and the registration survives
+    /// focus changes — critical when the overlay has whited out the screen
+    /// and no app can take focus to surface a permission prompt.
+    private func registerBoostHotKey() {
+        var handlerSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                                        eventKind: UInt32(kEventHotKeyPressed))
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        let installStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, _, userData in
+                guard let userData = userData else { return noErr }
+                let delegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
+                // Carbon's handler thread isn't guaranteed to be main; hop to
+                // main before touching UserDefaults and the NSMenuItem state.
+                DispatchQueue.main.async { delegate.toggleBoostState() }
+                return noErr
+            },
+            1,
+            &handlerSpec,
+            selfPtr,
+            &boostHotKeyHandler
+        )
+        guard installStatus == noErr else {
+            NSLog("BrightXDR: InstallEventHandler failed (status=\(installStatus)) — hotkey unavailable")
+            return
+        }
+
+        let modifiers = UInt32(controlKey | optionKey | cmdKey)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x4258_5252) /* 'BXRR' */, id: 1)
+        let registerStatus = RegisterEventHotKey(
+            UInt32(kVK_ANSI_B),
+            modifiers,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &boostHotKeyRef
+        )
+        if registerStatus != noErr {
+            NSLog("BrightXDR: RegisterEventHotKey failed (status=\(registerStatus)) — ⌃⌥⌘B may be claimed by another app")
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let ref = boostHotKeyRef {
+            UnregisterEventHotKey(ref)
+            boostHotKeyRef = nil
+        }
+        if let handler = boostHotKeyHandler {
+            RemoveEventHandler(handler)
+            boostHotKeyHandler = nil
+        }
     }
 
     private func currentBrightness() -> Float {

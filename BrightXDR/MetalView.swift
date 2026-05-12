@@ -144,25 +144,35 @@ class MetalView: MTKView, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         // Hide the overlay when:
-        //  1. The user has flipped the menu-bar Boost toggle off. Manual escape
-        //     hatch for HDR-rendering apps (QuickTime HDR video, browser HDR,
-        //     Photos with HDR images) where the multiply-blend overlay washes
-        //     the content out.
-        //  2. macOS's screencaptureui process is alive — it owns the
-        //     cmd-shift-3/4/5 capture sessions; the multiply-blend overlay
-        //     otherwise saturates the live display to white during recording.
-        //     EDR-headroom doesn't change in that state, so process presence is
-        //     the only reliable signal.
+        //  1. The user has flipped Boost off (menu toggle or ⌃⌥⌘B global
+        //     hotkey). Manual escape hatch for HDR-rendering apps (QuickTime
+        //     HDR video, browser HDR, Photos with HDR images) and screen-
+        //     sharing apps (Teams/Zoom) where the multiply-blend overlay
+        //     washes the content out.
+        //  2. macOS's screencaptureui is showing interactive capture UI —
+        //     the cmd-shift-4 selection rect, the cmd-shift-5 panel, or a
+        //     recording session. The multiply-blend overlay otherwise
+        //     saturates the live display to white during these.
+        //
+        //     Note: the lingering screenshot thumbnail preview ALSO keeps
+        //     screencaptureui resident (up to ~5s after a screenshot, or
+        //     indefinitely if user ignores it). Process-presence alone
+        //     over-suppresses for that thumbnail — see #5. We check window
+        //     bounds instead to filter the thumbnail out.
         let userEnabled = (UserDefaults.standard.object(forKey: boostEnabledKey) as? Bool) ?? true
-        let recording = NSWorkspace.shared.runningApplications.contains { app in
-            app.bundleIdentifier == "com.apple.screencaptureui"
-        }
-        let suppress = !userEnabled || recording
+        let capturing = isScreencaptureuiShowingInteractiveUI()
+        let suppress = !userEnabled || capturing
         let targetAlpha: CGFloat = suppress ? 0.0 : 1.0
         if window?.alphaValue != targetAlpha {
             window?.alphaValue = targetAlpha
         }
-        if suppress { return }
+        // Don't short-circuit the render when suppressed: keep presenting
+        // drawables so macOS keeps EDR mode engaged on this layer. If we stop
+        // presenting, EDR de-engages and takes ~0.5–2s to ramp back up the
+        // moment alpha returns to 1 — visible as a "screen takes a beat to
+        // brighten after the screenshot thumbnail dismisses" lag.
+        // The window's alphaValue=0 makes the rendered output invisible, so
+        // there's no user-facing cost to rendering through suppression.
 
         // Verify transparent image was rendered
         guard let image = image, let colorSpace = colorSpace else { return  }
@@ -184,6 +194,45 @@ class MetalView: MTKView, MTKViewDelegate {
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { }
+
+    /// True only when screencaptureui owns at least one on-screen window
+    /// larger than the screenshot thumbnail preview (~140×100). The
+    /// interactive capture UI (selection rect, cmd-shift-5 panel, recording
+    /// session) is always much larger, so a 200px threshold cleanly
+    /// separates "actively capturing" from "thumbnail still lingering."
+    ///
+    /// Uses CGWindowListCopyWindowInfo with bounds + ownerPID only — no
+    /// window titles — so it works without Screen Recording / Screen Capture
+    /// TCC permission on macOS 13+.
+    private func isScreencaptureuiShowingInteractiveUI() -> Bool {
+        guard let app = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == "com.apple.screencaptureui"
+        }) else { return false }
+        let capturePID = app.processIdentifier
+
+        guard let entries = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
+            // If the enumeration fails for any reason, fall back to the old
+            // process-presence behavior so the user is never stuck with a
+            // whited-out screen during a real capture.
+            return true
+        }
+
+        let thumbnailMaxDimension: CGFloat = 200
+        for entry in entries {
+            guard let ownerPID = entry[kCGWindowOwnerPID as String] as? pid_t,
+                  ownerPID == capturePID,
+                  let boundsDict = entry[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
+            else { continue }
+            if bounds.width > thumbnailMaxDimension || bounds.height > thumbnailMaxDimension {
+                return true
+            }
+        }
+        return false
+    }
 
     /// Re-tune the brightness multiplier without rebuilding the view.
     /// Re-renders the static white CIImage through the same CIColorControls

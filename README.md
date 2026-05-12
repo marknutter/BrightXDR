@@ -19,6 +19,22 @@ The app uses MetalKit to overlay the CIImage with a transparent color in EDR col
 ## Requirements
 Supported devices: Apple MacBook Pro with 14 or 16 inches and Apple Pro Display XDR.
 
+## Controls
+
+Click the menu-bar sun icon for the controls menu:
+
+- **Boost** (⌃⌥⌘B): toggle the brightness boost on/off.
+- **Brightness slider**: 0.5–2.5, snaps in 0.10 steps. Persists across launches.
+- **Quit**.
+
+### Global Boost hotkey: ⌃⌥⌘B
+
+⌃⌥⌘B is registered system-wide (Carbon hotkey, no Accessibility permission needed) and works **even when the overlay has whited out the screen and the menu bar is unreachable** — e.g. when a Teams/Zoom screen share, QuickTime HDR playback, or other capture path conflicts with the multiply-blend overlay. Press it once to drop the overlay, do whatever you needed to do, press again to re-engage.
+
+### Auto-suppression during screenshots / screen recording
+
+The overlay auto-hides while `screencaptureui` is showing its interactive UI (the ⌘⇧4 selection rect, the ⌘⇧5 panel, or an active screen recording). The lingering ⌘⇧3 thumbnail preview does **not** suppress the overlay — it's filtered out by a window-bounds check so brightness returns the moment the capture is done.
+
 ## Limitations
 - __Mission Control & Spaces__
   - HDR brightness disabled during switching between Spaces.
