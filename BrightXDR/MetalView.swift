@@ -240,6 +240,15 @@ class MetalView: MTKView, MTKViewDelegate {
             return true
         }
 
+        // Window-level filter. The genuine interactive capture UI lives high
+        // (popup-menu level = 101, full-screen capture overlay observed at
+        // 500 in the field). screencaptureui ALSO keeps a persistent helper
+        // window at layer 24 (kCGMainMenuWindowLevel) that sometimes lingers
+        // indefinitely after a capture completes — the source of #13's
+        // intermittent stuck-dim symptom. Ignore anything at or below
+        // menu-bar level; only treat higher-level windows as a real capture
+        // in progress.
+        let interactiveMinLayer = 25
         let thumbnailMaxDimension: CGFloat = 200
         var matching: [(bounds: CGRect, layer: Int, alpha: Double)] = []
         for entry in entries {
@@ -248,8 +257,9 @@ class MetalView: MTKView, MTKViewDelegate {
                   let boundsDict = entry[kCGWindowBounds as String] as? [String: Any],
                   let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
             else { continue }
+            let layer = (entry[kCGWindowLayer as String] as? Int) ?? 0
+            if layer < interactiveMinLayer { continue }
             if bounds.width > thumbnailMaxDimension || bounds.height > thumbnailMaxDimension {
-                let layer = (entry[kCGWindowLayer as String] as? Int) ?? 0
                 let alpha = (entry[kCGWindowAlpha as String] as? Double) ?? 1.0
                 matching.append((bounds, layer, alpha))
             }
